@@ -1,0 +1,9 @@
+# Terminates HTTPS (certificates are obtained automatically) and forwards to the MCP server.
+{$HOAS_MCP_DOMAIN} {
+	# Optional extra layer: only allow Anthropic's servers (the Claude apps connect from this range).
+	# Add your own IP too if you also use Claude Code against this address.
+	# @blocked not remote_ip 160.79.104.0/21
+	# respond @blocked 403
+
+	reverse_proxy hoas:8080
+}

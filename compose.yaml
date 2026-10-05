@@ -1,0 +1,29 @@
+# Public deployment: Caddy serves HTTPS on your domain and forwards to the MCP server.
+# Requires in .env: HOAS_USERNAME, HOAS_PASSWORD, HOAS_MCP_API_KEY, HOAS_MCP_DOMAIN (e.g. hoas.example.com)
+services:
+  hoas:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    # Not published on the host: only reachable through Caddy
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      HOAS_MCP_DOMAIN: ${HOAS_MCP_DOMAIN:?set HOAS_MCP_DOMAIN in .env, e.g. hoas.example.com}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - hoas
+
+volumes:
+  caddy_data:
+  caddy_config:

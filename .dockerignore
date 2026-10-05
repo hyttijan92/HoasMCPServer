@@ -1,0 +1,12 @@
+# Secrets must never reach the build context
+.env
+.env.*
+
+target/
+.git/
+.idea/
+.vscode/
+*.iml
+HELP.md
+Dockerfile
+.dockerignore
