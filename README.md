@@ -26,9 +26,18 @@ you first.
 - A HOAS booking account (username and password)
 - Docker, or Java 21+ to run it without Docker
 
+## Getting started
+
+The project is in the `hoas/` folder. All paths and commands in this README are relative to it:
+
+```bash
+git clone https://github.com/hyttijan92/HoasMCPServer.git
+cd HoasMCPServer/hoas
+```
+
 ## Configuration
 
-Settings are read from environment variables, or from a `.env` file in the project folder. `.env` is gitignored and
+Settings are read from environment variables, or from a `.env` file in the `hoas/` folder. `.env` is gitignored and
 excluded from the Docker image.
 
 | Variable | Required | Description |
@@ -112,7 +121,7 @@ To change the API key, update `HOAS_MCP_API_KEY`, restart, and re-add the connec
 
 ## Deploy to Azure
 
-`deploy/azure` contains ARM templates and a script that run the server on
+`hoas/deploy/azure` contains ARM templates and a script that run the server on
 [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/). Azure provides the HTTPS address and
 certificate, so Caddy and a domain of your own are not needed.
 
@@ -179,7 +188,7 @@ Built with Spring Boot 4 and Spring AI's MCP server starter.
 ./mvnw test
 ```
 
-The parser tests run against a saved, anonymised timetable page in `src/test/resources`. The Docker build skips the
+The parser tests run against a saved, anonymised timetable page in `hoas/src/test/resources`. The Docker build skips the
 tests, so run them separately when you change the parser.
 
 ## License
