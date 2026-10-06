@@ -1,29 +1,26 @@
-# syntax=docker/dockerfile:1
-
 # --- build: compile and package the Spring Boot jar ---
-FROM eclipse-temurin:21-jdk AS build
+# Ubuntu 22.04 (jammy) based: the tools in the 24.04 images use system calls that "az acr build" hosts lack
+FROM eclipse-temurin:21-jdk-jammy AS build
 WORKDIR /workspace
 
-# Resolve dependencies first so they are cached unless pom.xml changes
+# Resolve dependencies first so this layer is reused unless pom.xml changes.
+# Plain RUN steps only (no BuildKit cache mounts), so the image also builds with "az acr build".
 COPY mvnw pom.xml ./
 COPY .mvn .mvn
-RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q dependency:go-offline
+RUN ./mvnw -B -q dependency:go-offline
 
 COPY src src
-RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q -DskipTests package \
+RUN ./mvnw -B -q -DskipTests package \
 	&& cp target/hoas-*.jar app.jar \
-	&& java -Djarmode=tools -jar app.jar extract --layers --destination extracted
+	&& java -Djarmode=tools -jar app.jar extract --destination extracted
 
 # --- runtime: JRE only, non-root ---
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 RUN useradd --system --no-create-home --uid 10001 hoas
 
-# Layers ordered from least to most frequently changing
-COPY --from=build /workspace/extracted/dependencies/ ./
-COPY --from=build /workspace/extracted/spring-boot-loader/ ./
-COPY --from=build /workspace/extracted/snapshot-dependencies/ ./
-COPY --from=build /workspace/extracted/application/ ./
+# One COPY step: several consecutive "COPY --from" steps fail on the classic builder that "az acr build" uses
+COPY --from=build /workspace/extracted/ ./
 
 USER hoas
 # The site shows dates and times in Finnish local time

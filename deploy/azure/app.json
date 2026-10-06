@@ -1,0 +1,209 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "HOAS MCP server on Azure Container Apps: log workspace, environment, pull identity and the app itself. Requires the registry from registry.json with the image already built into it."
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": { "description": "Azure region for all resources." }
+    },
+    "appName": {
+      "type": "string",
+      "defaultValue": "hoas-mcp",
+      "minLength": 2,
+      "maxLength": 32,
+      "metadata": { "description": "Name of the container app; also the first part of its public hostname." }
+    },
+    "acrName": {
+      "type": "string",
+      "metadata": { "description": "Name of the existing container registry (output of registry.json)." }
+    },
+    "imageName": {
+      "type": "string",
+      "defaultValue": "hoas-mcp",
+      "metadata": { "description": "Image repository name in the registry." }
+    },
+    "imageTag": {
+      "type": "string",
+      "defaultValue": "latest",
+      "metadata": { "description": "Image tag to run. Use a new tag per build so each deployment starts a new revision." }
+    },
+    "hoasUsername": {
+      "type": "securestring",
+      "metadata": { "description": "HOAS booking username." }
+    },
+    "hoasPassword": {
+      "type": "securestring",
+      "metadata": { "description": "HOAS booking password." }
+    },
+    "mcpApiKey": {
+      "type": "securestring",
+      "minLength": 32,
+      "metadata": { "description": "API key every MCP client must send (Authorization: Bearer <key>)." }
+    },
+    "minReplicas": {
+      "type": "int",
+      "defaultValue": 0,
+      "allowedValues": [ 0, 1 ],
+      "metadata": { "description": "0 = scale to zero when idle (cheapest, cold start on first request). 1 = always on." }
+    },
+    "allowedIpRanges": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": { "description": "CIDR ranges allowed to reach the app. Empty = no IP restriction. Anthropic's servers (Claude apps) use 160.79.104.0/21." }
+    }
+  },
+  "variables": {
+    "workspaceName": "[format('{0}-logs', parameters('appName'))]",
+    "environmentName": "[format('{0}-env', parameters('appName'))]",
+    "identityName": "[format('{0}-pull', parameters('appName'))]",
+    "acrId": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
+    "identityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]",
+    "acrPullRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+    "loginServer": "[format('{0}.azurecr.io', parameters('acrName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('workspaceName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": { "name": "PerGB2018" },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[variables('identityName')]",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', parameters('acrName'))]",
+      "name": "[guid(variables('acrId'), variables('identityId'), variables('acrPullRoleId'))]",
+      "dependsOn": [
+        "[variables('identityId')]"
+      ],
+      "properties": {
+        "roleDefinitionId": "[variables('acrPullRoleId')]",
+        "principalId": "[reference(variables('identityId'), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('environmentName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+      ],
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2023-09-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2023-09-01').primarySharedKey]"
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('appName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
+        "[variables('identityId')]",
+        "[extensionResourceId(variables('acrId'), 'Microsoft.Authorization/roleAssignments', guid(variables('acrId'), variables('identityId'), variables('acrPullRoleId')))]"
+      ],
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[variables('identityId')]": {}
+        }
+      },
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": true,
+            "targetPort": 8080,
+            "transport": "auto",
+            "allowInsecure": false,
+            "copy": [
+              {
+                "name": "ipSecurityRestrictions",
+                "count": "[length(parameters('allowedIpRanges'))]",
+                "input": {
+                  "name": "[format('allow-{0}', copyIndex('ipSecurityRestrictions'))]",
+                  "ipAddressRange": "[parameters('allowedIpRanges')[copyIndex('ipSecurityRestrictions')]]",
+                  "action": "Allow"
+                }
+              }
+            ]
+          },
+          "registries": [
+            {
+              "server": "[variables('loginServer')]",
+              "identity": "[variables('identityId')]"
+            }
+          ],
+          "secrets": [
+            { "name": "hoas-username", "value": "[parameters('hoasUsername')]" },
+            { "name": "hoas-password", "value": "[parameters('hoasPassword')]" },
+            { "name": "hoas-mcp-api-key", "value": "[parameters('mcpApiKey')]" }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "hoas-mcp",
+              "image": "[format('{0}/{1}:{2}', variables('loginServer'), parameters('imageName'), parameters('imageTag'))]",
+              "resources": {
+                "cpu": "[json('0.5')]",
+                "memory": "1Gi"
+              },
+              "env": [
+                { "name": "HOAS_USERNAME", "secretRef": "hoas-username" },
+                { "name": "HOAS_PASSWORD", "secretRef": "hoas-password" },
+                { "name": "HOAS_MCP_API_KEY", "secretRef": "hoas-mcp-api-key" }
+              ],
+              "probes": [
+                {
+                  "type": "Startup",
+                  "tcpSocket": { "port": 8080 },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 5,
+                  "failureThreshold": 24
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": "[parameters('minReplicas')]",
+            "maxReplicas": 1
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "fqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('appName'))).configuration.ingress.fqdn]"
+    },
+    "mcpUrl": {
+      "type": "string",
+      "value": "[format('https://{0}/mcp', reference(resourceId('Microsoft.App/containerApps', parameters('appName'))).configuration.ingress.fqdn)]"
+    }
+  }
+}

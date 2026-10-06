@@ -110,6 +110,46 @@ if you only use the Claude apps; add your own IP if you also use Claude Code aga
 
 To change the API key, update `HOAS_MCP_API_KEY`, restart, and re-add the connector in each client.
 
+## Deploy to Azure
+
+`deploy/azure` contains ARM templates and a script that run the server on
+[Azure Container Apps](https://learn.microsoft.com/azure/container-apps/). Azure provides the HTTPS address and
+certificate, so Caddy and a domain of your own are not needed.
+
+```bash
+az login
+deploy/azure/deploy.sh
+```
+
+The script reads the secrets from `.env`, then:
+
+1. creates the resource group `hoas-mcp-rg` in `swedencentral`
+2. deploys `registry.json`: a container registry (Basic tier)
+3. builds the image in Azure and pushes it to the registry
+4. deploys `app.json`: a log workspace, the Container Apps environment, a managed identity that may pull the image,
+   and the app itself with the three secrets
+5. prints the MCP endpoint, `https://hoas-mcp.<...>.azurecontainerapps.io/mcp`
+
+Run it again to deploy a new version. Settings are environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `RESOURCE_GROUP` | `hoas-mcp-rg` | Resource group that holds everything |
+| `LOCATION` | `swedencentral` | Azure region |
+| `APP_NAME` | `hoas-mcp` | App name, and the first part of its hostname |
+| `MIN_REPLICAS` | `0` | `0` scales to zero when idle (cheapest; the first request after a pause waits for a cold start). `1` keeps it always on |
+| `ALLOWED_IP_RANGES` | empty | Space-separated CIDR ranges allowed in, e.g. `160.79.104.0/21` for Anthropic's servers. Empty means no IP restriction |
+
+The app never runs more than one replica, because the HOAS login and the MCP sessions are kept in memory.
+
+Your account needs permission to create role assignments in the resource group (Owner or User Access Administrator),
+because the template grants the app's identity pull access to the registry.
+
+```bash
+az containerapp logs show -g hoas-mcp-rg -n hoas-mcp --follow   # logs
+az group delete -n hoas-mcp-rg                                  # remove everything
+```
+
 ## Security notes
 
 - Anyone with the API key can book and cancel in your name. Keep `.env` private and only expose the server over HTTPS.

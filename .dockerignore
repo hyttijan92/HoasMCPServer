@@ -10,3 +10,8 @@ target/
 HELP.md
 Dockerfile
 .dockerignore
+deploy/
+README.md
+LICENSE
+compose.yaml
+Caddyfile
